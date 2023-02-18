@@ -49,31 +49,31 @@ class T5DynamicDataProcessor:
         for labels. If larger, sequence will be truncated. Other sequences
         padded to max.
         :param bool shuffle, optional: Change the order of data each epoch.
-        :param int shuffle_buffer, optional: Size of buffer for shuffling. 
+        :param int shuffle_buffer, optional: Size of buffer for shuffling.
         :param bool shuffle_seed, optional: If true allows for reproducibility
         while retaining shuffling.
         :param bool repeat, optional: Allows TF dataset to continue sending
         data for arbitrary epochs.
-        :param bool use_multiple_workers, optional: Specifies whether to use 
+        :param bool use_multiple_workers, optional: Specifies whether to use
         multiple workers with the Cerebras System.
-        :param int n_parallel_reads, optional: The number of elements 
+        :param int n_parallel_reads, optional: The number of elements
         processed concurrently for dataset.
-        :param bool pack_sequences, optional: Combine sentences that are 
-        shorter than max_sequence_length to reduce computation on padding. 
-        :param int num_documents_to_concatenate, optional: Number of docs to 
+        :param bool pack_sequences, optional: Combine sentences that are
+        shorter than max_sequence_length to reduce computation on padding.
+        :param int num_documents_to_concatenate, optional: Number of docs to
         pack together.
         :param int vocab_size, optional: Number of tokens in vocabulary.
         :param bool do_lower_case, optional: Set all tokens to lowercase.
-        :param int or list buckets, optional: Used for bucketing similar-sized 
-        sequences to pack together. If int, will split max sequence length 
+        :param int or list buckets, optional: Used for bucketing similar-sized
+        sequences to pack together. If int, will split max sequence length
         to evenly spaced intervals based on the number of buckets specified.
         If list, the list elements are the boundaries of the sequence lengths.
         :param bool use_vsl, optional: Use variable-sequence-length.
-        :param int input_pad_id, optional: Can specify the index of token to 
+        :param int input_pad_id, optional: Can specify the index of token to
         use for padding.
-        :params bool mixed_precision, optional: If set, will do calculations 
+        :params bool mixed_precision, optional: If set, will do calculations
         in float16 rather than float32 when possible.
-        
+
         """
         self.batch_size = params["batch_size"]
         self.shuffle = params.get("shuffle", True)
@@ -127,9 +127,12 @@ class T5DynamicDataProcessor:
         self.compute_dtype = (
             tf.float16 if params["mixed_precision"] else tf.float32
         )
+        return
 
-    def create_tf_dataset(
-        self, mode=tf.estimator.ModeKeys.TRAIN, input_context=None
+    def create_tf_dataset(self,
+                          mode=tf.estimator.ModeKeys.TRAIN,
+                          file_pattern="*.txt.gz",
+                          input_context=None
     ):
         """
         Create tf dataset.
@@ -155,8 +158,10 @@ class T5DynamicDataProcessor:
                 f"target sequence length."
             )
 
+        self.compression_type \
+            = ("GZIP" if file_pattern.endswith(".gz") else None)
         dataset = tf.data.Dataset.list_files(
-            os.path.join(self.data_dir, "*.txt"),
+            os.path.join(self.data_dir, file_pattern),
             shuffle=self.shuffle,
             seed=self.shuffle_seed,
         )
@@ -165,7 +170,8 @@ class T5DynamicDataProcessor:
         )
         # Read dataset of sentencepiece string tokens.
         dataset = dataset.interleave(
-            tf.data.TextLineDataset,
+            lambda *x: \
+            tf.data.TextLineDataset(x, compression_type=self.compression_type),
             cycle_length=self.n_parallel_reads,
             **map_args,
         )
@@ -228,7 +234,6 @@ class T5DynamicDataProcessor:
             pad_id=self.input_pad_id, pad_id_label=-1 if self.use_vsl else None,
         )
         dataset = dataset.map(mask_map_fn, **map_args)
-
         dataset = dataset.map(
             lambda x, y: scale_loss(
                 x,
